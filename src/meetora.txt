@@ -1,0 +1,841 @@
+#include <iostream>
+#include <vector>
+#include <map>
+#include <string>
+#include <algorithm>
+#include <iomanip>
+#include <sstream>
+#include <limits>
+
+#ifdef _WIN32
+#define CLEAR "cls"
+#else
+#define CLEAR "clear"
+#endif
+
+// ──────────────────────────────────────────────
+// Structures
+// ──────────────────────────────────────────────
+
+enum class Role { Participant, Organizer, Admin };
+
+struct User {
+    int id;
+    std::string name;
+    std::string email;
+    std::string password;
+    Role role;
+};
+
+enum class EventStatus { Published, Draft };
+
+struct Event {
+    int id;
+    std::string name;
+    std::string date;
+    std::string time;
+    std::string location;
+    std::string description;
+    int organizerId;
+    EventStatus status;
+    int capacity;
+    double price;
+    int registered;
+};
+
+enum class OrderStatus { Paid, Pending };
+
+struct Order {
+    int id;
+    int userId;
+    int eventId;
+    double amount;
+    OrderStatus status;
+};
+
+// ──────────────────────────────────────────────
+// Global State
+// ──────────────────────────────────────────────
+
+std::vector<User>  users;
+std::vector<Event> events;
+std::vector<Order> orders;
+
+int nextUserId  = 4;
+int nextEventId = 4;
+int nextOrderId = 4;
+
+User* currentUser = nullptr;
+
+// ──────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────
+
+void clearScreen() {
+    system(CLEAR);
+}
+
+void pause() {
+    std::cout << "\nНажмите Enter для продолжения...";
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.get();
+}
+
+void printLine(char c = '-', int len = 60) {
+    std::cout << std::string(len, c) << "\n";
+}
+
+void printHeader(const std::string& title) {
+    clearScreen();
+    printLine('=');
+    std::cout << "  MEETORA  |  " << title << "\n";
+    printLine('=');
+    std::cout << "\n";
+}
+
+std::string statusStr(EventStatus s) {
+    return s == EventStatus::Published ? "Опубликовано" : "Черновик";
+}
+
+std::string orderStatusStr(OrderStatus s) {
+    return s == OrderStatus::Paid ? "Оплачен" : "Ожидает оплаты";
+}
+
+std::string roleStr(Role r) {
+    switch (r) {
+        case Role::Participant: return "Участник";
+        case Role::Organizer:  return "Организатор";
+        case Role::Admin:      return "Администратор";
+    }
+    return "";
+}
+
+User* findUserByEmail(const std::string& email) {
+    for (auto& u : users)
+        if (u.email == email) return &u;
+    return nullptr;
+}
+
+Event* findEventById(int id) {
+    for (auto& e : events)
+        if (e.id == id) return &e;
+    return nullptr;
+}
+
+User* findUserById(int id) {
+    for (auto& u : users)
+        if (u.id == id) return &u;
+    return nullptr;
+}
+
+bool userRegisteredForEvent(int userId, int eventId) {
+    for (auto& o : orders)
+        if (o.userId == userId && o.eventId == eventId) return true;
+    return false;
+}
+
+std::string readLine(const std::string& prompt) {
+    std::cout << prompt;
+    std::string val;
+    std::getline(std::cin, val);
+    return val;
+}
+
+std::string readPassword(const std::string& prompt) {
+    std::cout << prompt;
+    std::string val;
+    std::getline(std::cin, val);
+    return val;
+}
+
+int readInt(const std::string& prompt) {
+    std::string line;
+    while (true) {
+        std::cout << prompt;
+        std::getline(std::cin, line);
+        try {
+            return std::stoi(line);
+        } catch (...) {
+            std::cout << "Введите корректное число.\n";
+        }
+    }
+}
+
+double readDouble(const std::string& prompt) {
+    std::string line;
+    while (true) {
+        std::cout << prompt;
+        std::getline(std::cin, line);
+        try {
+            return std::stod(line);
+        } catch (...) {
+            std::cout << "Введите корректное число.\n";
+        }
+    }
+}
+
+// ──────────────────────────────────────────────
+// Seed Data
+// ──────────────────────────────────────────────
+
+void seedData() {
+    users = {
+        {1, "Администратор",  "admin@meetora.ru",   "admin123",  Role::Admin},
+        {2, "Иван Иванов",    "ivan@example.ru",    "pass123",   Role::Participant},
+        {3, "Пётр Петров",    "petr@example.ru",    "pass123",   Role::Organizer},
+    };
+
+    events = {
+        {1, "IT Conference 2024",    "20.05.2024", "10:00", "Москва, ЦВК «Экспоцентр»",
+            "Ежегодная конференция для IT-специалистов и разработчиков. "
+            "Обсуждение трендов, новых технологий и кейсов.",
+            3, EventStatus::Published, 200, 3500.0, 45},
+        {2, "Digital-симер форум",   "15.06.2024", "09:00", "Санкт-Петербург",
+            "Форум по цифровому маркетингу и продвижению.",
+            3, EventStatus::Published, 150, 2900.0, 30},
+        {3, "Marketing Day",          "10.07.2024", "11:00", "Екатеринбург",
+            "День маркетинга для профессионалов отрасли.",
+            3, EventStatus::Draft,     100, 2500.0, 10},
+    };
+
+    orders = {
+        {1, 2, 1, 3500.0, OrderStatus::Paid},
+        {2, 2, 2, 2900.0, OrderStatus::Paid},
+        {3, 2, 3, 2500.0, OrderStatus::Pending},
+    };
+
+    nextUserId  = 4;
+    nextEventId = 4;
+    nextOrderId = 4;
+}
+
+// ──────────────────────────────────────────────
+// Auth Screens
+// ──────────────────────────────────────────────
+
+void showLogin();
+void showRegister();
+void participantMenu();
+void organizerMenu();
+void adminMenu();
+
+void authMenu() {
+    while (true) {
+        printHeader("Добро пожаловать");
+        std::cout << "  Платформа для организации мероприятий и конференций\n\n";
+        printLine();
+        std::cout << "  [1] Войти\n";
+        std::cout << "  [2] Зарегистрироваться\n";
+        std::cout << "  [0] Выход\n";
+        printLine();
+
+        int choice = readInt("  Выберите действие: ");
+        if (choice == 1) showLogin();
+        else if (choice == 2) showRegister();
+        else if (choice == 0) { std::cout << "\nДо свидания!\n"; exit(0); }
+        else std::cout << "Неверный выбор.\n";
+    }
+}
+
+void showLogin() {
+    printHeader("Вход в систему");
+
+    std::string email    = readLine("  Email:    ");
+    std::string password = readPassword("  Пароль:   ");
+
+    User* u = findUserByEmail(email);
+    if (!u || u->password != password) {
+        std::cout << "\n  Неверный email или пароль.\n";
+        pause();
+        return;
+    }
+
+    currentUser = u;
+    std::cout << "\n  Добро пожаловать, " << u->name << "!\n";
+    pause();
+
+    if      (u->role == Role::Admin)       adminMenu();
+    else if (u->role == Role::Organizer)   organizerMenu();
+    else                                   participantMenu();
+
+    currentUser = nullptr;
+}
+
+void showRegister() {
+    printHeader("Создание аккаунта");
+
+    std::string name     = readLine("  Имя:               ");
+    std::string email    = readLine("  Email:             ");
+    std::string password = readPassword("  Пароль:            ");
+    std::string confirm  = readPassword("  Подтвердите пароль:");
+
+    if (password != confirm) {
+        std::cout << "\n  Пароли не совпадают.\n";
+        pause();
+        return;
+    }
+    if (findUserByEmail(email)) {
+        std::cout << "\n  Пользователь с таким email уже существует.\n";
+        pause();
+        return;
+    }
+    if (name.empty() || email.empty() || password.empty()) {
+        std::cout << "\n  Все поля обязательны для заполнения.\n";
+        pause();
+        return;
+    }
+
+    std::cout << "\n  Выберите роль:\n";
+    std::cout << "  [1] Участник    - Поиск мероприятий и участие\n";
+    std::cout << "  [2] Организатор - Создание и управление мероприятиями\n";
+    int roleChoice = readInt("  Роль: ");
+    Role role = (roleChoice == 2) ? Role::Organizer : Role::Participant;
+
+    User newUser{nextUserId++, name, email, password, role};
+    users.push_back(newUser);
+
+    std::cout << "\n  Аккаунт успешно создан! Теперь вы можете войти.\n";
+    pause();
+}
+
+// ──────────────────────────────────────────────
+// Event detail (shared)
+// ──────────────────────────────────────────────
+
+void showEventDetail(Event& ev) {
+    printHeader("Страница мероприятия");
+
+    User* org = findUserById(ev.organizerId);
+
+    std::cout << "  " << ev.name << "\n\n";
+    std::cout << "  Дата:    " << ev.date << " " << ev.time << "\n";
+    std::cout << "  Место:   " << ev.location << "\n";
+    std::cout << "  Осталось мест: " << (ev.capacity - ev.registered) << "\n";
+    std::cout << "  Стоимость: " << std::fixed << std::setprecision(0) << ev.price << " ₽\n";
+    std::cout << "  Статус:  " << statusStr(ev.status) << "\n";
+    if (org) std::cout << "  Организатор: " << org->name << "\n";
+    std::cout << "\n";
+    printLine();
+    std::cout << "  Описание:\n  " << ev.description << "\n";
+    printLine();
+
+    if (currentUser && currentUser->role == Role::Participant) {
+        bool alreadyReg = userRegisteredForEvent(currentUser->id, ev.id);
+        if (alreadyReg) {
+            std::cout << "\n  Вы уже зарегистрированы на это мероприятие.\n";
+        } else if (ev.capacity - ev.registered > 0 && ev.status == EventStatus::Published) {
+            std::cout << "\n  [1] Зарегистрироваться\n";
+            std::cout << "  [0] Назад\n";
+            int ch = readInt("  Выбор: ");
+            if (ch == 1) {
+                Order o{nextOrderId++, currentUser->id, ev.id, ev.price, OrderStatus::Pending};
+                orders.push_back(o);
+                ev.registered++;
+                std::cout << "\n  Вы успешно зарегистрированы! Заказ #" << (nextOrderId - 1) << " создан.\n";
+                pause();
+                return;
+            }
+        } else {
+            std::cout << "\n  Регистрация недоступна (нет мест или мероприятие не опубликовано).\n";
+        }
+    }
+
+    pause();
+}
+
+// ──────────────────────────────────────────────
+// Participant Menu
+// ──────────────────────────────────────────────
+
+void participantBrowseEvents() {
+    printHeader("Доступные мероприятия");
+
+    std::vector<Event*> pub;
+    for (auto& e : events)
+        if (e.status == EventStatus::Published) pub.push_back(&e);
+
+    if (pub.empty()) {
+        std::cout << "  Нет доступных мероприятий.\n";
+        pause();
+        return;
+    }
+
+    std::cout << "  " << std::left
+              << std::setw(4)  << "#"
+              << std::setw(26) << "Название"
+              << std::setw(12) << "Дата"
+              << std::setw(20) << "Место"
+              << "Цена\n";
+    printLine();
+
+    for (size_t i = 0; i < pub.size(); ++i) {
+        auto* e = pub[i];
+        std::cout << "  " << std::left
+                  << std::setw(4)  << (i + 1)
+                  << std::setw(26) << e->name.substr(0, 24)
+                  << std::setw(12) << e->date
+                  << std::setw(20) << e->location.substr(0, 18)
+                  << std::fixed << std::setprecision(0) << e->price << " ₽\n";
+    }
+    printLine();
+    std::cout << "  [0] Назад\n";
+
+    int ch = readInt("  Выберите мероприятие: ");
+    if (ch >= 1 && ch <= (int)pub.size())
+        showEventDetail(*pub[ch - 1]);
+}
+
+void participantMyEvents() {
+    printHeader("Мои мероприятия");
+
+    std::vector<Order*> myOrders;
+    for (auto& o : orders)
+        if (o.userId == currentUser->id) myOrders.push_back(&o);
+
+    if (myOrders.empty()) {
+        std::cout << "  У вас нет зарегистрированных мероприятий.\n";
+        pause();
+        return;
+    }
+
+    std::cout << "  " << std::left
+              << std::setw(8)  << "Заказ №"
+              << std::setw(26) << "Мероприятие"
+              << std::setw(12) << "Дата"
+              << std::setw(10) << "Сумма"
+              << "Статус\n";
+    printLine();
+
+    for (auto* o : myOrders) {
+        Event* e = findEventById(o->eventId);
+        if (!e) continue;
+        std::cout << "  " << std::left
+                  << std::setw(8)  << ("#" + std::to_string(o->id))
+                  << std::setw(26) << e->name.substr(0, 24)
+                  << std::setw(12) << e->date
+                  << std::setw(10) << (std::to_string((int)o->amount) + " ₽")
+                  << orderStatusStr(o->status) << "\n";
+    }
+    printLine();
+    std::cout << "\n  Для оплаты ожидающих заказов обратитесь на ресепшн.\n";
+    pause();
+}
+
+void participantProfile() {
+    printHeader("Профиль");
+    std::cout << "  Имя:   " << currentUser->name  << "\n";
+    std::cout << "  Email: " << currentUser->email  << "\n";
+    std::cout << "  Роль:  " << roleStr(currentUser->role) << "\n";
+
+    int reg = 0;
+    for (auto& o : orders) if (o.userId == currentUser->id) reg++;
+    std::cout << "  Зарегистрирован на мероприятий: " << reg << "\n";
+    pause();
+}
+
+void participantMenu() {
+    while (true) {
+        printHeader("Личный кабинет участника");
+        std::cout << "  Добро пожаловать, " << currentUser->name << "!\n\n";
+        printLine();
+        std::cout << "  [1] Главная — доступные мероприятия\n";
+        std::cout << "  [2] Мои мероприятия\n";
+        std::cout << "  [3] Профиль\n";
+        std::cout << "  [0] Выйти из аккаунта\n";
+        printLine();
+
+        int ch = readInt("  Выбор: ");
+        if      (ch == 1) participantBrowseEvents();
+        else if (ch == 2) participantMyEvents();
+        else if (ch == 3) participantProfile();
+        else if (ch == 0) return;
+    }
+}
+
+// ──────────────────────────────────────────────
+// Organizer Menu
+// ──────────────────────────────────────────────
+
+void organizerCreateEvent() {
+    printHeader("Новое мероприятие");
+
+    std::string name  = readLine("  Название мероприятия: ");
+    std::string date  = readLine("  Дата (ДД.ММ.ГГГГ):    ");
+    std::string time  = readLine("  Время (ЧЧ:ММ):        ");
+    std::string place = readLine("  Место проведения:     ");
+    std::string desc  = readLine("  Описание:             ");
+    int    cap   = readInt   ("  Вместимость (мест):   ");
+    double price = readDouble("  Стоимость (₽):        ");
+
+    std::cout << "\n  Статус:\n  [1] Опубликовать\n  [2] Сохранить как черновик\n";
+    int sc = readInt("  Выбор: ");
+    EventStatus st = (sc == 1) ? EventStatus::Published : EventStatus::Draft;
+
+    Event ev{nextEventId++, name, date, time, place, desc,
+             currentUser->id, st, cap, price, 0};
+    events.push_back(ev);
+
+    std::cout << "\n  Мероприятие \"" << name << "\" успешно создано!\n";
+    pause();
+}
+
+void organizerEditEvent(Event& ev) {
+    printHeader("Редактирование мероприятия");
+    std::cout << "  Текущее название: " << ev.name << "\n";
+    std::cout << "  (Оставьте поле пустым, чтобы не изменять)\n\n";
+
+    auto ask = [](const std::string& label, const std::string& cur) -> std::string {
+        std::cout << "  " << label << " [" << cur << "]: ";
+        std::string v;
+        std::getline(std::cin, v);
+        return v.empty() ? cur : v;
+    };
+
+    ev.name     = ask("Название",  ev.name);
+    ev.date     = ask("Дата",      ev.date);
+    ev.time     = ask("Время",     ev.time);
+    ev.location = ask("Место",     ev.location);
+    ev.description = ask("Описание", ev.description);
+
+    std::cout << "\n  Статус:\n  [1] Опубликовать\n  [2] Черновик\n  [0] Не менять\n";
+    int sc = readInt("  Выбор: ");
+    if (sc == 1) ev.status = EventStatus::Published;
+    else if (sc == 2) ev.status = EventStatus::Draft;
+
+    std::cout << "\n  Изменения сохранены.\n";
+    pause();
+}
+
+void organizerDeleteEvent(int eventId) {
+    events.erase(std::remove_if(events.begin(), events.end(),
+        [eventId](const Event& e){ return e.id == eventId; }), events.end());
+    orders.erase(std::remove_if(orders.begin(), orders.end(),
+        [eventId](const Order& o){ return o.eventId == eventId; }), orders.end());
+}
+
+void organizerMyEvents() {
+    while (true) {
+        printHeader("Мои мероприятия");
+
+        std::vector<Event*> mine;
+        for (auto& e : events)
+            if (e.organizerId == currentUser->id) mine.push_back(&e);
+
+        if (mine.empty()) {
+            std::cout << "  У вас нет созданных мероприятий.\n";
+            std::cout << "\n  [1] Создать мероприятие\n  [0] Назад\n";
+            int ch = readInt("  Выбор: ");
+            if (ch == 1) organizerCreateEvent();
+            else return;
+            continue;
+        }
+
+        std::cout << "  " << std::left
+                  << std::setw(4)  << "#"
+                  << std::setw(26) << "Название"
+                  << std::setw(12) << "Дата"
+                  << std::setw(20) << "Место"
+                  << std::setw(16) << "Статус"
+                  << "Участники\n";
+        printLine();
+        for (size_t i = 0; i < mine.size(); ++i) {
+            auto* e = mine[i];
+            std::cout << "  " << std::left
+                      << std::setw(4)  << (i + 1)
+                      << std::setw(26) << e->name.substr(0, 24)
+                      << std::setw(12) << e->date
+                      << std::setw(20) << e->location.substr(0, 18)
+                      << std::setw(16) << statusStr(e->status)
+                      << e->registered << "/" << e->capacity << "\n";
+        }
+        printLine();
+        std::cout << "  [C] Создать новое    [E<N>] Редактировать N    [D<N>] Удалить N    [0] Назад\n";
+        printLine();
+
+        std::string cmd;
+        std::cout << "  Команда: ";
+        std::getline(std::cin, cmd);
+
+        if (cmd == "0") return;
+        else if (cmd == "c" || cmd == "C") organizerCreateEvent();
+        else if (cmd.size() >= 2 && (cmd[0] == 'e' || cmd[0] == 'E')) {
+            try {
+                int idx = std::stoi(cmd.substr(1)) - 1;
+                if (idx >= 0 && idx < (int)mine.size())
+                    organizerEditEvent(*mine[idx]);
+            } catch (...) {}
+        }
+        else if (cmd.size() >= 2 && (cmd[0] == 'd' || cmd[0] == 'D')) {
+            try {
+                int idx = std::stoi(cmd.substr(1)) - 1;
+                if (idx >= 0 && idx < (int)mine.size()) {
+                    std::cout << "\n  Удалить \"" << mine[idx]->name << "\"? [y/n]: ";
+                    std::string confirm;
+                    std::getline(std::cin, confirm);
+                    if (confirm == "y" || confirm == "Y") {
+                        organizerDeleteEvent(mine[idx]->id);
+                        std::cout << "  Мероприятие удалено.\n";
+                        pause();
+                    }
+                }
+            } catch (...) {}
+        }
+    }
+}
+
+void organizerProfile() {
+    printHeader("Профиль организатора");
+    std::cout << "  Имя:   " << currentUser->name  << "\n";
+    std::cout << "  Email: " << currentUser->email  << "\n";
+    std::cout << "  Роль:  " << roleStr(currentUser->role) << "\n";
+
+    int evCount = 0;
+    for (auto& e : events) if (e.organizerId == currentUser->id) evCount++;
+    std::cout << "  Создано мероприятий: " << evCount << "\n";
+    pause();
+}
+
+void organizerMenu() {
+    while (true) {
+        printHeader("Личный кабинет организатора");
+        std::cout << "  " << currentUser->name << "\n\n";
+        printLine();
+        std::cout << "  [1] Мои мероприятия\n";
+        std::cout << "  [2] Создать мероприятие\n";
+        std::cout << "  [3] Профиль\n";
+        std::cout << "  [0] Выйти из аккаунта\n";
+        printLine();
+
+        int ch = readInt("  Выбор: ");
+        if      (ch == 1) organizerMyEvents();
+        else if (ch == 2) organizerCreateEvent();
+        else if (ch == 3) organizerProfile();
+        else if (ch == 0) return;
+    }
+}
+
+// ──────────────────────────────────────────────
+// Admin Panel
+// ──────────────────────────────────────────────
+
+void adminDashboard() {
+    printHeader("Панель администратора — Главная");
+
+    int evCount   = (int)events.size();
+    int ordCount  = (int)orders.size();
+    int usrCount  = (int)users.size();
+
+    std::cout << "  Добро пожаловать, администратор!\n\n";
+    printLine();
+    std::cout << "  СТАТИСТИКА\n\n";
+
+    std::cout << "  " << std::left
+              << std::setw(20) << "Мероприятий"
+              << std::setw(20) << "Заказов"
+              << std::setw(20) << "Пользователей" << "\n";
+    std::cout << "  " << std::left
+              << std::setw(20) << evCount
+              << std::setw(20) << ordCount
+              << std::setw(20) << usrCount << "\n\n";
+    printLine();
+
+    std::cout << "  ПОСЛЕДНИЕ МЕРОПРИЯТИЯ\n\n";
+    std::cout << "  " << std::left
+              << std::setw(22) << "Название"
+              << std::setw(12) << "Дата"
+              << std::setw(20) << "Место"
+              << "Статус\n";
+    printLine();
+
+    int shown = 0;
+    for (int i = (int)events.size() - 1; i >= 0 && shown < 5; --i, ++shown) {
+        auto& e = events[i];
+        std::cout << "  " << std::left
+                  << std::setw(22) << e.name.substr(0, 20)
+                  << std::setw(12) << e.date
+                  << std::setw(20) << e.location.substr(0, 18)
+                  << statusStr(e.status) << "\n";
+    }
+    printLine();
+
+    std::cout << "\n  ПОСЛЕДНИЕ ЗАКАЗЫ\n\n";
+    std::cout << "  " << std::left
+              << std::setw(10) << "ID заказа"
+              << std::setw(20) << "Пользователь"
+              << std::setw(22) << "Мероприятие"
+              << std::setw(10) << "Сумма"
+              << "Статус\n";
+    printLine();
+
+    shown = 0;
+    for (int i = (int)orders.size() - 1; i >= 0 && shown < 5; --i, ++shown) {
+        auto& o = orders[i];
+        User*  u = findUserById(o.userId);
+        Event* e = findEventById(o.eventId);
+        std::cout << "  " << std::left
+                  << std::setw(10) << ("#" + std::to_string(o.id))
+                  << std::setw(20) << (u ? u->name.substr(0, 18) : "?")
+                  << std::setw(22) << (e ? e->name.substr(0, 20) : "?")
+                  << std::setw(10) << (std::to_string((int)o.amount) + " ₽")
+                  << orderStatusStr(o.status) << "\n";
+    }
+    printLine();
+    pause();
+}
+
+void adminUsersList() {
+    printHeader("Пользователи");
+
+    std::cout << "  " << std::left
+              << std::setw(6)  << "ID"
+              << std::setw(22) << "Имя"
+              << std::setw(28) << "Email"
+              << "Роль\n";
+    printLine();
+
+    for (auto& u : users) {
+        std::cout << "  " << std::left
+                  << std::setw(6)  << u.id
+                  << std::setw(22) << u.name.substr(0, 20)
+                  << std::setw(28) << u.email.substr(0, 26)
+                  << roleStr(u.role) << "\n";
+    }
+    printLine();
+    pause();
+}
+
+void adminEventsList() {
+    printHeader("Все мероприятия");
+
+    std::cout << "  " << std::left
+              << std::setw(4)  << "ID"
+              << std::setw(24) << "Название"
+              << std::setw(12) << "Дата"
+              << std::setw(20) << "Место"
+              << std::setw(16) << "Статус"
+              << "Участники\n";
+    printLine();
+
+    for (auto& e : events) {
+        std::cout << "  " << std::left
+                  << std::setw(4)  << e.id
+                  << std::setw(24) << e.name.substr(0, 22)
+                  << std::setw(12) << e.date
+                  << std::setw(20) << e.location.substr(0, 18)
+                  << std::setw(16) << statusStr(e.status)
+                  << e.registered << "/" << e.capacity << "\n";
+    }
+    printLine();
+    pause();
+}
+
+void adminOrdersList() {
+    printHeader("Заказы");
+
+    std::cout << "  " << std::left
+              << std::setw(8)  << "ID"
+              << std::setw(20) << "Пользователь"
+              << std::setw(22) << "Мероприятие"
+              << std::setw(10) << "Сумма"
+              << "Статус\n";
+    printLine();
+
+    for (auto& o : orders) {
+        User*  u = findUserById(o.userId);
+        Event* e = findEventById(o.eventId);
+        std::cout << "  " << std::left
+                  << std::setw(8)  << ("#" + std::to_string(o.id))
+                  << std::setw(20) << (u ? u->name.substr(0, 18) : "?")
+                  << std::setw(22) << (e ? e->name.substr(0, 20) : "?")
+                  << std::setw(10) << (std::to_string((int)o.amount) + " ₽")
+                  << orderStatusStr(o.status) << "\n";
+    }
+    printLine();
+
+    std::cout << "\n  Изменить статус заказа:\n";
+    std::cout << "  Введите ID заказа (или 0 для выхода): ";
+    std::string line;
+    std::getline(std::cin, line);
+    if (line == "0" || line.empty()) return;
+
+    int oid;
+    try { oid = std::stoi(line); } catch (...) { return; }
+
+    for (auto& o : orders) {
+        if (o.id == oid) {
+            o.status = (o.status == OrderStatus::Paid) ? OrderStatus::Pending : OrderStatus::Paid;
+            std::cout << "  Статус заказа #" << oid << " изменён на: " << orderStatusStr(o.status) << "\n";
+            pause();
+            return;
+        }
+    }
+    std::cout << "  Заказ не найден.\n";
+    pause();
+}
+
+void adminDeleteUser() {
+    printHeader("Удаление пользователя");
+    int id = readInt("  Введите ID пользователя: ");
+
+    if (id == currentUser->id) {
+        std::cout << "  Нельзя удалить текущего администратора.\n";
+        pause();
+        return;
+    }
+
+    for (auto it = users.begin(); it != users.end(); ++it) {
+        if (it->id == id) {
+            std::cout << "  Удалить \"" << it->name << "\"? [y/n]: ";
+            std::string c;
+            std::getline(std::cin, c);
+            if (c == "y" || c == "Y") {
+                orders.erase(std::remove_if(orders.begin(), orders.end(),
+                    [id](const Order& o){ return o.userId == id; }), orders.end());
+                users.erase(it);
+                std::cout << "  Пользователь удалён.\n";
+            }
+            pause();
+            return;
+        }
+    }
+    std::cout << "  Пользователь не найден.\n";
+    pause();
+}
+
+void adminMenu() {
+    while (true) {
+        printHeader("Панель администратора");
+        std::cout << "  " << currentUser->name << " | Администратор\n\n";
+        printLine();
+        std::cout << "  [1] Главная (статистика)\n";
+        std::cout << "  [2] Пользователи\n";
+        std::cout << "  [3] Мероприятия\n";
+        std::cout << "  [4] Заказы\n";
+        std::cout << "  [5] Удалить пользователя\n";
+        std::cout << "  [0] Выйти из аккаунта\n";
+        printLine();
+
+        int ch = readInt("  Выбор: ");
+        if      (ch == 1) adminDashboard();
+        else if (ch == 2) adminUsersList();
+        else if (ch == 3) adminEventsList();
+        else if (ch == 4) adminOrdersList();
+        else if (ch == 5) adminDeleteUser();
+        else if (ch == 0) return;
+    }
+}
+
+// ──────────────────────────────────────────────
+// Entry Point
+// ──────────────────────────────────────────────
+
+int main() {
+    // UTF-8 for Windows (no-op on Linux/macOS)
+#ifdef _WIN32
+    system("chcp 65001 > nul");
+#endif
+
+    seedData();
+    authMenu();
+    return 0;
+}
